@@ -1,4 +1,4 @@
-import { GeolocateControl, Map as MLMap, setWorkerUrl, type CanvasSource } from 'maplibre-gl';
+import { AttributionControl, GeolocateControl, Map as MLMap, setWorkerUrl, type CanvasSource } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { GRID, gridCorners } from '../radar/grid';
@@ -11,8 +11,8 @@ const STYLE_LIGHT = 'https://tiles.openfreemap.org/styles/positron';
 const STYLE_DARK = 'https://tiles.openfreemap.org/styles/dark';
 const VIEW_KEY = 'rainradar.view';
 const RADAR_ATTRIBUTION =
-  'Radar <a href="https://www.metoffice.gov.uk/" target="_blank" rel="noopener">© Crown copyright Met Office</a> ' +
-  '(<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>)';
+  'Radar <a href="https://www.metoffice.gov.uk/" target="_blank" rel="noopener">© Met Office</a> ' +
+  '<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA</a>';
 
 interface SavedView {
   center: [number, number];
@@ -45,7 +45,6 @@ export class RadarMap {
   private readonly image: ImageData;
   private readonly pixels: Uint32Array;
   private ready: Promise<void>;
-  private animating = false;
 
   constructor(container: HTMLElement) {
     this.canvas = document.createElement('canvas');
@@ -64,7 +63,7 @@ export class RadarMap {
       zoom: saved?.zoom ?? 5,
       minZoom: 4,
       maxZoom: 12,
-      attributionControl: { compact: true, customAttribution: RADAR_ATTRIBUTION },
+      attributionControl: false,
       dragRotate: false,
       pitchWithRotate: false,
       touchPitch: false,
@@ -77,6 +76,8 @@ export class RadarMap {
       fitBoundsOptions: { maxZoom: 8 },
     });
     this.map.addControl(geolocate, 'top-right');
+    // Credits sit at the top, level with the locate button, always expanded but translucent.
+    this.map.addControl(new AttributionControl({ compact: false, customAttribution: RADAR_ATTRIBUTION }), 'top-left');
     this.map.on('moveend', () => saveView(this.map));
 
     this.ready = new Promise((resolve) => {
@@ -118,20 +119,8 @@ export class RadarMap {
     await this.ready;
     // A paused canvas source only re-uploads its texture while "playing", so play for one render.
     const src = this.map.getSource<CanvasSource>('radar');
-    if (!src || this.animating) return;
+    if (!src) return;
     src.play();
-    this.map.once('render', () => {
-      if (!this.animating) src.pause();
-    });
-  }
-
-  /** While animating, keep the canvas source live instead of toggling per frame. */
-  setAnimating(on: boolean): void {
-    this.animating = on;
-    void this.ready.then(() => {
-      const src = this.map.getSource<CanvasSource>('radar');
-      if (on) src?.play();
-      else src?.pause();
-    });
+    this.map.once('render', () => src.pause());
   }
 }

@@ -1,9 +1,10 @@
 :root {
-  --panel-bg: rgba(255, 255, 255, 0.92);
+  --panel-bg: rgba(255, 255, 255, 0.55);
   --panel-fg: #10233a;
-  --muted: #5b6b7d;
+  --muted: #3f5064;
   --accent: #1f6fe0;
-  --track: #c9d4e2;
+  --attrib-bg: rgba(255, 255, 255, 0.45);
+  --attrib-fg: rgba(16, 35, 58, 0.75);
   --banner-bg: #fff3cd;
   --banner-fg: #5c4400;
   color-scheme: light dark;
@@ -11,11 +12,12 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --panel-bg: rgba(18, 26, 38, 0.92);
+    --panel-bg: rgba(18, 26, 38, 0.55);
     --panel-fg: #e8eef6;
-    --muted: #93a3b5;
+    --muted: #b3c0cf;
     --accent: #5aa0ff;
-    --track: #3a4a5e;
+    --attrib-bg: rgba(18, 26, 38, 0.45);
+    --attrib-fg: rgba(232, 238, 246, 0.75);
     --banner-bg: #4a3b00;
     --banner-fg: #ffe8a3;
   }
@@ -43,93 +45,56 @@ body,
 
 .controls {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: calc(12px + env(safe-area-inset-bottom));
-  padding: 10px 14px 8px;
-  border-radius: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  width: min(calc(100% - 24px), 480px);
+  padding: 4px 12px 0;
+  border-radius: 12px;
   background: var(--panel-bg);
   color: var(--panel-fg);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
-  backdrop-filter: blur(6px);
-  max-width: 560px;
-  margin: 0 auto;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 .controls .row {
   display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.controls .play {
-  flex: none;
-  width: 44px;
-  height: 44px;
-  border: none;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-
-.controls .play:disabled {
-  opacity: 0.4;
-}
-
-.controls .play svg {
-  width: 24px;
-  height: 24px;
-  fill: currentColor;
-}
-
-.controls .icon-pause,
-.controls.playing .icon-play {
-  display: none;
-}
-
-.controls.playing .icon-pause {
-  display: inline;
-}
-
-.controls .time {
-  display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
   font-variant-numeric: tabular-nums;
 }
 
 .controls .clock {
-  font-size: 26px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .controls .relative {
-  font-size: 15px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.controls .status {
+  margin-left: auto;
+  font-size: 11px;
   color: var(--muted);
 }
 
 .controls .slider {
+  display: block;
   width: 100%;
-  margin: 10px 0 4px;
-  height: 32px;
+  height: 26px;
+  margin: 0;
   accent-color: var(--accent);
   touch-action: none;
 }
 
-.controls .status {
-  font-size: 12px;
-  color: var(--muted);
-  min-height: 1.2em;
-}
-
 .controls .banner {
-  margin: -2px 0 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  font-size: 13px;
+  margin: 2px 0 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
   background: var(--banner-bg);
   color: var(--banner-fg);
 }
@@ -138,12 +103,26 @@ body,
   display: none;
 }
 
-/* Keep MapLibre's bottom controls clear of the panel. */
-.maplibregl-ctrl-bottom-left,
-.maplibregl-ctrl-bottom-right {
-  bottom: calc(150px + env(safe-area-inset-bottom));
-}
-
+.maplibregl-ctrl-top-left,
 .maplibregl-ctrl-top-right {
   top: env(safe-area-inset-top);
+}
+
+/* Credits: top-left, vertically level with the 29px locate button opposite. */
+.maplibregl-ctrl-top-left .maplibregl-ctrl.maplibregl-ctrl-attrib {
+  margin: 10px 0 0 10px;
+  min-height: 29px;
+  max-width: calc(100vw - 64px);
+  display: flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--attrib-bg);
+  color: var(--attrib-fg);
+  font-size: 10px;
+  line-height: 12px;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: inherit;
 }

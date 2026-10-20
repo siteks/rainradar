@@ -9,7 +9,9 @@ screen from Chrome. It is for personal use, and coverage needs to be **UK / Irel
 
 Must-haves:
 - A full-screen map with the radar overlay. Pinch to zoom and pan, plus a "my location" dot.
-- A time slider and play/pause button. Past frames (≈2–3 h) → "now" → forecast frames (≈2 h).
+- A time slider. Past frames (≈2–3 h) → "now" → forecast frames (≈2 h).
+- **No play button.** Keep the UI minimal: a slim, translucent slider strip at the bottom, and credits
+  shown translucent at the top-left, level with the locate button. This is the user's stated preference.
 - Forecast frames must **look like the radar frames** and flow continuously across "now", as RainToday
   did and Yahoo Weather doesn't. The forecast quality is the main point of the project. See "Forecast
   strategy".

@@ -8,8 +8,6 @@ import RadarWorker from './worker/radar.worker?worker';
 const HISTORY_SECONDS = 3 * 3600;
 const REFRESH_MS = 5 * 60 * 1000;
 const STALE_SECONDS = 40 * 60;
-const PLAY_STEP_MS = 450;
-const PLAY_HOLD_STEPS = 4; // pause on the newest frame before looping
 
 export class App {
   private readonly map: RadarMap;
@@ -22,28 +20,19 @@ export class App {
   private pending = new Set<number>();
   private lastRefresh = 0;
   private offline = false;
-  private playTimer: number | null = null;
-  private holdSteps = 0;
 
   constructor(root: HTMLElement) {
     const mapEl = document.createElement('div');
     mapEl.className = 'map';
     root.appendChild(mapEl);
     this.map = new RadarMap(mapEl);
-    this.controls = new Controls(root, {
-      onSeek: (i) => {
-        this.stop();
-        this.seek(i);
-      },
-      onTogglePlay: () => (this.playTimer === null ? this.start() : this.stop()),
-    });
+    this.controls = new Controls(root, { onSeek: (i) => this.seek(i) });
 
     this.worker = new RadarWorker();
     this.worker.onmessage = (ev: MessageEvent<FromWorker>) => this.onWorker(ev.data);
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && Date.now() - this.lastRefresh > REFRESH_MS / 2) void this.refresh();
-      if (document.visibilityState === 'hidden') this.stop();
     });
     setInterval(() => {
       if (document.visibilityState === 'visible') void this.refresh();
@@ -115,42 +104,9 @@ export class App {
     void this.map.show(this.frames.get(this.times[index]) ?? null);
   }
 
-  private start(): void {
-    if (this.times.length < 2) return;
-    this.map.setAnimating(true);
-    this.controls.setPlaying(true);
-    if (this.index === this.times.length - 1) this.seek(0);
-    this.holdSteps = 0;
-    this.playTimer = window.setInterval(() => {
-      if (this.index < this.times.length - 1) this.seek(this.index + 1);
-      else if (++this.holdSteps > PLAY_HOLD_STEPS) {
-        this.holdSteps = 0;
-        this.seek(0);
-      }
-    }, PLAY_STEP_MS);
-  }
-
-  private stop(): void {
-    if (this.playTimer === null) return;
-    clearInterval(this.playTimer);
-    this.playTimer = null;
-    this.controls.setPlaying(false);
-    this.map.setAnimating(false);
-    this.seek(this.index); // make sure the final frame reaches the map texture
-  }
-
   private onKey(e: KeyboardEvent): void {
-    if (e.key === 'ArrowLeft' && this.index > 0) {
-      this.stop();
-      this.seek(this.index - 1);
-    } else if (e.key === 'ArrowRight' && this.index < this.times.length - 1) {
-      this.stop();
-      this.seek(this.index + 1);
-    } else if (e.key === ' ') {
-      e.preventDefault();
-      if (this.playTimer === null) this.start();
-      else this.stop();
-    }
+    if (e.key === 'ArrowLeft' && this.index > 0) this.seek(this.index - 1);
+    else if (e.key === 'ArrowRight' && this.index < this.times.length - 1) this.seek(this.index + 1);
   }
 
   private updateStatus(): void {
@@ -162,13 +118,8 @@ export class App {
     else if (age > STALE_SECONDS) this.controls.setBanner(`Latest radar is ${Math.round(age / 60)} min old`);
     else this.controls.setBanner(null);
 
-    if (this.pending.size) {
-      const total = this.frames.size + this.pending.size;
-      this.controls.setStatus(`Loading radar ${this.frames.size}/${total}…`);
-    } else if (newest !== undefined) {
-      this.controls.setStatus(`Met Office radar · latest ${formatClock(newest)}`);
-    } else {
-      this.controls.setStatus(this.offline ? '' : 'Loading radar…');
-    }
+    // Only say something while loading; the slider already shows the latest time.
+    if (this.pending.size) this.controls.setStatus(`Loading ${this.frames.size}/${this.frames.size + this.pending.size}`);
+    else this.controls.setStatus(newest === undefined && !this.offline ? 'Loading…' : '');
   }
 }
