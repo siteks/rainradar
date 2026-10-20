@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
-import { GRID_VERSION } from '../radar/grid';
+import { GRID, GRID_VERSION } from '../radar/grid';
 import type { FrameRef } from '../sources/metoffice';
 import { decodeOdim } from './decode';
+import { estimateMotion, morph } from './motion';
 import type { FromWorker, ToWorker } from './protocol';
 import { buildLookup, resample, sourceGridKey } from './reproject';
 
@@ -10,13 +11,21 @@ declare const self: DedicatedWorkerGlobalScope;
 // Decoded display-grid frames are cached so a cold start doesn't re-decode HDF5.
 const GRID_CACHE = `radar-grids-${GRID_VERSION}`;
 const GRID_CACHE_MAX_AGE = 6 * 3600;
+const STEP_SECONDS = 300;
+const MAX_GAP_SECONDS = 1800; // interpolate across at most one missing 15-min frame
 
 let lookup: { key: string; lut: Int32Array } | null = null;
-let queue: FrameRef[] = [];
+let refs: FrameRef[] = [];
+/** The worker's own copies of observed frames, needed for interpolation. */
+const observed = new Map<number, Uint8Array>();
+/** Pairs ("t0-t1") whose in-between frames have been sent. */
+const interpolated = new Set<string>();
 let running = false;
+let rerun = false;
 
 const post = (msg: FromWorker, transfer: Transferable[] = []): void => self.postMessage(msg, transfer);
 const cacheKey = (time: number): string => `grid/${time}`;
+const yieldToEvents = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 async function openCache(): Promise<Cache | null> {
   try {
@@ -51,28 +60,71 @@ async function pruneCache(cache: Cache | null): Promise<void> {
   }
 }
 
-async function drain(): Promise<void> {
-  if (running) return;
-  running = true;
-  const cache = await openCache();
-  while (queue.length) {
-    const ref = queue.shift()!;
+async function loadObserved(cache: Cache | null): Promise<void> {
+  for (const ref of [...refs].sort((a, b) => b.time - a.time)) {
+    if (observed.has(ref.time)) continue;
     try {
       const data = await loadFrame(ref, cache);
-      post({ type: 'frame', time: ref.time, data }, [data.buffer]);
+      observed.set(ref.time, data);
+      const copy = data.slice();
+      post({ type: 'frame', time: ref.time, kind: 'observed', data: copy }, [copy.buffer]);
     } catch (e) {
       post({ type: 'error', time: ref.time, message: e instanceof Error ? e.message : String(e) });
     }
+    if (rerun) return; // the window changed; start again
   }
-  running = false;
   post({ type: 'idle' });
+}
+
+/** Fill 5-min frames between consecutive observed frames, newest pair first. */
+async function interpolate(): Promise<void> {
+  const times = [...observed.keys()].sort((a, b) => b - a);
+  for (let i = 0; i + 1 < times.length; i++) {
+    const t1 = times[i];
+    const t0 = times[i + 1];
+    const gap = t1 - t0;
+    const key = `${t0}-${t1}`;
+    if (gap <= STEP_SECONDS || gap > MAX_GAP_SECONDS || interpolated.has(key)) continue;
+
+    const a = observed.get(t0)!;
+    const b = observed.get(t1)!;
+    const field = estimateMotion(a, b, GRID);
+    for (let t = t0 + STEP_SECONDS; t < t1; t += STEP_SECONDS) {
+      const data = morph(a, b, field, (t - t0) / gap, GRID);
+      post({ type: 'frame', time: t, kind: 'interpolated', data }, [data.buffer]);
+    }
+    interpolated.add(key);
+    await yieldToEvents();
+    if (rerun) return;
+  }
+}
+
+async function drain(): Promise<void> {
+  if (running) {
+    rerun = true;
+    return;
+  }
+  running = true;
+  const cache = await openCache();
+  do {
+    rerun = false;
+    await loadObserved(cache);
+    if (!rerun) await interpolate();
+  } while (rerun);
+  running = false;
   await pruneCache(cache);
 }
 
 self.onmessage = (ev: MessageEvent<ToWorker>) => {
   const msg = ev.data;
   if (msg.type === 'load') {
-    queue = [...msg.frames].sort((a, b) => b.time - a.time);
+    refs = msg.frames;
+    const wanted = new Set(refs.map((r) => r.time));
+    for (const t of observed.keys()) if (!wanted.has(t)) observed.delete(t);
+    for (const key of interpolated) {
+      const [t0, t1] = key.split('-').map(Number);
+      if (!observed.has(t0) || !observed.has(t1)) interpolated.delete(key);
+    }
     void drain();
   }
 };

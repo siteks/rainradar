@@ -27,7 +27,8 @@ Milestones:
 - **M1 — past radar + slider + PWA: done** (2026-10-20). Verified in desktop Chrome against live data.
   - Not yet tested on a phone.
   - Repo: https://github.com/siteks/rainradar (remote `origin`). Pages URL: https://siteks.github.io/rainradar/
-- **M2 — 5-min in-between frames (motion-based morphing) for the past.** Next.
+- **M2 — 5-min in-between frames + now-centred timeline: done** (2026-10-20). Verified in desktop Chrome.
+  Phone performance is still unmeasured.
 - **M3 — model motion forecast** (see "Forecast strategy"), plus verification/replay mode.
 - **M4 — polish:** a "rain at my location" graph, settings, and maybe the MOGREPS chance-of-rain layer.
 
@@ -247,11 +248,29 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
   4. It quantises to bytes (`src/radar/palette.ts`: 0 = no data, 1 = dry, 2–255 = log rain rate).
      The display-grid bytes are stored in Cache Storage (`radar-grids-<GRID_VERSION>`), so a cold start
      skips decoding.
-  5. The main thread keeps `Map<time, Uint8Array>`. `RadarMap.show()` colours a frame through the
+  5. **In-between frames** (`src/worker/motion.ts`). The worker keeps its own copy of each observed
+     frame. After loading, it works through consecutive pairs newest first (gaps ≤ 30 min):
+     - `estimateMotion` does block matching on block-averaged log-rain. A 72 km window is searched
+       exhaustively on 12 km cells (±48 km), refined on 6 km then 3 km cells, with a parabola for
+       sub-cell precision.
+     - The vectors sit on a 24-px (≈36 km) lattice of nodes. They're cleaned with a 3×3 median, then
+       filled and smoothed by confidence-weighted averaging. Where support is thin they blend
+       towards the global median vector.
+     - `morph(a, b, field, α)` samples A at p − α·d and B at p + (1−α)·d, and blends the two in
+       quantised (log) space.
+     - The frames are posted with `kind: 'interpolated'`. The main thread never lets them replace
+       an `observed` frame.
+     - Timing in Node on real frames: about 0.3 s per motion estimate and 0.1 s per morph.
+  6. The main thread keeps `Map<time, {kind, data}>`. `RadarMap.show()` colours a frame through the
      `PALETTE` lookup into a single canvas.
-  6. That canvas is a MapLibre `canvas` source with `animate: false`. A paused canvas source only
+  7. That canvas is a MapLibre `canvas` source with `animate: false`. A paused canvas source only
      re-uploads while "playing", so `show()` plays it for one render. The radar layer sits under the
      basemap's first symbol layer, so labels stay on top.
+- **Timeline** (`App.rebuild`, `Controls.setTimeline`): 5-min slots from now − 2 h to now + 2 h,
+  rebuilt every minute so "now" stays roughly central. A tick marks the exact current time, and the
+  slots that have frames are highlighted on the track. Seeking snaps to the nearest slot with a
+  frame, and the future half clamps to the latest frame until forecasts exist (M3). The listing
+  fetches one extra frame before the window, so the earliest slots can be interpolated.
 - **Place labels** (`src/map/places.ts`): our own population-ranked labels replace the basemap's
   town/city labels over GB, Ireland and the Isle of Man below zoom 8.
   - Why: the basemap ranks places by Natural Earth `scalerank`, a hand-tuned atlas ranking. It puts
