@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dev-dist/
+.DS_Store
+*.local
+# local archives of radar/model data for verification work
+data/
