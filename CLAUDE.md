@@ -27,7 +27,9 @@ Milestones:
 - **M1 — past radar + slider + PWA: done** (2026-10-20). Verified in desktop Chrome against live data.
   - Not yet tested on a phone.
   - Repo: https://github.com/siteks/rainradar (remote `origin`). Pages URL: https://siteks.github.io/rainradar/
-- **M2 — 5-min in-between frames + now-centred timeline: done** (2026-10-20). Verified in desktop Chrome.
+- **M2 — in-between frames + now-centred timeline: done** (2026-10-20). Began with precomputed 5-min
+  frames; the same day it moved to GPU rendering with continuous time (1-min slider). Verified in
+  desktop Chrome; the 5-min version felt smooth on the user's phone.
   Phone performance is still unmeasured.
 - **M3 — model motion forecast** (see "Forecast strategy"), plus verification/replay mode.
 - **M4 — polish:** a "rain at my location" graph, settings, and maybe the MOGREPS chance-of-rain layer.
@@ -159,6 +161,13 @@ Other forecast-map routes:
 **Horizon: about 2 h.** Two lessons from other apps shape this:
 - **RainToday** looked right but moved rain in straight lines. UK rain mostly swirls around depressions,
   so straight-line extrapolation goes wrong within an hour.
+- **A frozen dense flow field is better than it sounds** (a point from a review of this design). One
+  vector for the whole screen fails on a low. A dense field already contains the rotation: rain north
+  of the low moves west while rain south of it moves east. Semi-Lagrangian steps follow the local vector
+  at each step, so paths curve. What it misses is that the field itself evolves: a band wrapping round
+  a low gets the right curved track but not the tightening of the spiral. That error is small at 1 h,
+  noticeable at 2 h, and beyond that is the model's job. So the model's value here is mainly the
+  **time evolution of the motion field**. Expect method (c) below to be a strong baseline.
 - **Yahoo Weather** jumps visually when the slider crosses into the future, because it switches from
   radar imagery to model imagery.
 
@@ -196,10 +205,12 @@ time and space.** It never switches to model imagery, so frame +0 is exactly the
    change in rain over the same (aligned) trajectory, capped to avoid making up storms.
 
 **Keeping the look smooth.** This is a hard requirement and matters as much as accuracy:
-- Show past *and* forecast frames at 5-min steps.
+- Time is continuous: the GPU builds the picture for any moment (the slider uses 1-min steps).
   - Fill in between the 15-min radar frames by **motion-based morphing** (warp both neighbouring frames
-    halfway along the flow), never by cross-fading.
-  - The slider should feel continuous across "now".
+    along the flow), never by cross-fading.
+  - Forecast frames should be built the same way in the shader: trace each pixel back through the
+    motion texture(s) in a few steps and sample the latest radar frame there. The slider should feel
+    continuous across "now".
 - Use the same colour scale, opacity and resolution for every frame. Don't blur more with lead time by
   default; if blurring is ever added, make it a setting.
 - Mark future frames gently (a dashed slider track, a time label like "+40 min"), not with a different look.
@@ -208,7 +219,9 @@ time and space.** It never switches to model imagery, so frame +0 is exactly the
 - Replay past days and score +30/+60/+120 min against the radar that actually fell. Use CSI at
   0.5 mm/h and a fractions skill score.
 - Compare four methods: (a) hold the radar still, (b) straight-line observed motion (the RainToday
-  baseline), (c) observed flow held constant, (d) the model-motion method above.
+  baseline), (c) observed flow held constant (frozen dense field, semi-Lagrangian), (d) the
+  model-motion method above. (c) comes almost free once the forecast shader exists: trace each pixel
+  back through the latest motion field. Ship it as the first forecast, before the model work.
 - Radar goes back 2 years, but Open-Meteo keeps model files for only **7 days**. Save a small archive
   of model fields (precip + 700 hPa wind over the UK bounding box) while developing.
 
@@ -248,29 +261,41 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
   4. It quantises to bytes (`src/radar/palette.ts`: 0 = no data, 1 = dry, 2–255 = log rain rate).
      The display-grid bytes are stored in Cache Storage (`radar-grids-<GRID_VERSION>`), so a cold start
      skips decoding.
-  5. **In-between frames** (`src/worker/motion.ts`). The worker keeps its own copy of each observed
-     frame. After loading, it works through consecutive pairs newest first (gaps ≤ 30 min):
+  5. **Motion** (`src/worker/motion.ts`). The worker keeps its own copy of each observed frame.
+     After loading, it works through consecutive pairs newest first (gaps ≤ 30 min) and posts a
+     `motion` message per pair:
      - `estimateMotion` does block matching on block-averaged log-rain. A 72 km window is searched
        exhaustively on 12 km cells (±48 km), refined on 6 km then 3 km cells, with a parabola for
        sub-cell precision.
      - The vectors sit on a 24-px (≈36 km) lattice of nodes. They're cleaned with a 3×3 median, then
        filled and smoothed by confidence-weighted averaging. Where support is thin they blend
        towards the global median vector.
-     - `morph(a, b, field, α)` samples A at p − α·d and B at p + (1−α)·d, and blends the two in
-       quantised (log) space.
-     - The frames are posted with `kind: 'interpolated'`. The main thread never lets them replace
-       an `observed` frame.
-     - Timing in Node on real frames: about 0.3 s per motion estimate and 0.1 s per morph.
-  6. The main thread keeps `Map<time, {kind, data}>`. `RadarMap.show()` colours a frame through the
-     `PALETTE` lookup into a single canvas.
-  7. That canvas is a MapLibre `canvas` source with `animate: false`. A paused canvas source only
-     re-uploads while "playing", so `show()` plays it for one render. The radar layer sits under the
-     basemap's first symbol layer, so labels stay on top.
-- **Timeline** (`App.rebuild`, `Controls.setTimeline`): 5-min slots from now − 2 h to now + 2 h,
+     - Timing in Node on real frames: about 0.3 s per motion estimate.
+     - `morph()` is the CPU reference version of the shader's blend. It's used by the tests, and later
+       for verification mode.
+  6. **GPU rendering** (`src/map/radar-layer.ts`, a MapLibre WebGL2 custom layer).
+     - Textures: each observed frame is an R8 texture (quantised bytes), each motion field an RG16F
+       texture (one texel per node, linearly filtered), and the palette a 256×1 RGBA texture.
+     - Per pixel, the fragment shader samples A at p − α·d and B at p + (1−α)·d. Each sample is
+       bilinear in log space and skips no-data texels. It blends the two (falling back to one side
+       where the other has no data), then colours the result through the palette and outputs
+       premultiplied alpha.
+     - The quad uses `options.defaultProjectionData.mainMatrix`, which maps Mercator 0..1 to clip
+       space. `modelViewProjectionMatrix` is *not* in those units: the layer drew nothing with it.
+     - Uploads and deletions are queued and applied inside `render()`, so MapLibre resyncs its GL state
+       afterwards. Unpack state is set explicitly and then restored. CPU copies are kept so
+       `onAdd` can rebuild everything after a context loss.
+     - Transparent palette entries carry the first visible colour's RGB, so linear filtering doesn't
+       fade light rain through black.
+  7. **Choosing frames** (`src/radar/timeline.ts`): `pickFrames(t)` returns the bracketing observed
+     frames and α, or the nearest frame (α = 0) until that pair's motion has arrived.
+     `App.show()` labels the slider with the time actually shown. The layer sits under the basemap's
+     first symbol layer, so labels stay on top.
+- **Timeline** (`App.rebuild`, `Controls.setTimeline`): 1-min slots from now − 2 h to now + 2 h,
   rebuilt every minute so "now" stays roughly central. A tick marks the exact current time, and the
-  slots that have frames are highlighted on the track. Seeking snaps to the nearest slot with a
-  frame, and the future half clamps to the latest frame until forecasts exist (M3). The listing
-  fetches one extra frame before the window, so the earliest slots can be interpolated.
+  observed range is highlighted on the track. Shift+arrow moves 15 min. The future half clamps to
+  the latest frame until forecasts exist (M3). The listing fetches one extra frame before the
+  window, so the earliest minutes can be interpolated.
 - **Place labels** (`src/map/places.ts`): our own population-ranked labels replace the basemap's
   town/city labels over GB, Ireland and the Isle of Man below zoom 8.
   - Why: the basemap ranks places by Natural Earth `scalerank`, a hand-tuned atlas ranking. It puts
@@ -289,13 +314,15 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
     Birkenhead takes GeoNames' 325k (probably the Wirral's total). That's acceptable for ranking.
 - `GRID` (`src/radar/grid.ts`) is EPSG:3857 at 1500 m per pixel, covering lon −11…4.5 and lat 46.5…61
   (1151×1844 px). Bump `GRID_VERSION` if it or the quantisation changes.
-- **Forecast:** the same worker builds the forecast as described in "Forecast strategy":
-  - read the model fields with `@openmeteo/file-reader`;
-  - align the model with the radar and work out the motion field;
-  - warp the latest radar frame forward along it.
+- **Forecast (planned):** the work is split between the worker and the GPU.
+  - Worker, on coarse grids: read model fields with `@openmeteo/file-reader`, align them with the
+    radar, and produce motion fields for future times.
+  - GPU: render any future moment by tracing each pixel back through those fields and sampling the
+    latest radar frame.
 
-  It also produces the 5-min in-between frames for the past. Everything stays in one Web Mercator
-  raster space.
+  Everything stays in one Web Mercator raster space. WebGPU compute (with a feature check) becomes
+  worthwhile later for batch work such as verification replays. MapLibre v6 itself is WebGL2-only, so
+  rendering stays WebGL2.
 - **PWA:** a `manifest.webmanifest` (standalone, portrait, icons), and a service worker that precaches the
   app shell. Radar frames go in a separate runtime cache, keeping about 3 h of frames and evicting older ones.
 - **Refresh:** poll every 5 min while the page is visible (`visibilitychange`). New frames appear at

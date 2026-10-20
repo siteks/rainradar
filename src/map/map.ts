@@ -1,9 +1,8 @@
-import { AttributionControl, GeolocateControl, Map as MLMap, setWorkerUrl, type CanvasSource } from 'maplibre-gl';
+import { AttributionControl, GeolocateControl, Map as MLMap, setWorkerUrl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-import { GRID, gridCorners } from '../radar/grid';
-import { PALETTE } from '../radar/palette';
 import { addPlaceLabels } from './places';
+import { RadarLayer } from './radar-layer';
 
 // MapLibre locates its worker relative to its own module, which breaks once bundled.
 setWorkerUrl(maplibreWorkerUrl);
@@ -39,23 +38,12 @@ function saveView(map: MLMap): void {
   }
 }
 
-/** The map plus a single radar overlay that shows whichever frame is current. */
+/** The map plus the GPU radar layer. Frames and motion fields can be given to `radar` at any time. */
 export class RadarMap {
   readonly map: MLMap;
-  private readonly canvas: HTMLCanvasElement;
-  private readonly ctx: CanvasRenderingContext2D;
-  private readonly image: ImageData;
-  private readonly pixels: Uint32Array;
-  private ready: Promise<void>;
+  readonly radar = new RadarLayer();
 
   constructor(container: HTMLElement) {
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = GRID.width;
-    this.canvas.height = GRID.height;
-    this.ctx = this.canvas.getContext('2d')!;
-    this.image = this.ctx.createImageData(GRID.width, GRID.height);
-    this.pixels = new Uint32Array(this.image.data.buffer);
-
     const saved = loadView();
     const dark = matchMedia('(prefers-color-scheme: dark)').matches;
     this.map = new MLMap({
@@ -82,48 +70,12 @@ export class RadarMap {
     this.map.addControl(new AttributionControl({ compact: false, customAttribution: ATTRIBUTION }), 'top-left');
     this.map.on('moveend', () => saveView(this.map));
 
-    this.ready = new Promise((resolve) => {
-      this.map.on('load', () => {
-        this.addRadarLayer();
-        addPlaceLabels(this.map);
-        if (!saved) geolocate.trigger();
-        resolve();
-      });
+    this.map.on('load', () => {
+      // Put rain under the place labels so towns stay readable.
+      const firstSymbol = this.map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+      this.map.addLayer(this.radar, firstSymbol);
+      addPlaceLabels(this.map);
+      if (!saved) geolocate.trigger();
     });
-  }
-
-  private addRadarLayer(): void {
-    // Put rain under the place labels so towns stay readable.
-    const firstSymbol = this.map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
-    this.map.addSource('radar', {
-      type: 'canvas',
-      canvas: this.canvas,
-      coordinates: gridCorners(),
-      animate: false,
-    });
-    this.map.addLayer(
-      {
-        id: 'radar',
-        type: 'raster',
-        source: 'radar',
-        paint: { 'raster-opacity': 0.85, 'raster-fade-duration': 0 },
-      },
-      firstSymbol,
-    );
-  }
-
-  /** Draw a quantised frame (or clear the overlay when null). */
-  async show(frame: Uint8Array | null): Promise<void> {
-    const px = this.pixels;
-    if (frame) for (let i = 0; i < frame.length; i++) px[i] = PALETTE[frame[i]];
-    else px.fill(0);
-    this.ctx.putImageData(this.image, 0, 0);
-
-    await this.ready;
-    // A paused canvas source only re-uploads its texture while "playing", so play for one render.
-    const src = this.map.getSource<CanvasSource>('radar');
-    if (!src) return;
-    src.play();
-    this.map.once('render', () => src.pause());
   }
 }

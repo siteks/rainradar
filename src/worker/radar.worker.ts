@@ -2,7 +2,7 @@
 import { GRID, GRID_VERSION } from '../radar/grid';
 import type { FrameRef } from '../sources/metoffice';
 import { decodeOdim } from './decode';
-import { estimateMotion, morph } from './motion';
+import { estimateMotion } from './motion';
 import type { FromWorker, ToWorker } from './protocol';
 import { buildLookup, resample, sourceGridKey } from './reproject';
 
@@ -11,15 +11,14 @@ declare const self: DedicatedWorkerGlobalScope;
 // Decoded display-grid frames are cached so a cold start doesn't re-decode HDF5.
 const GRID_CACHE = `radar-grids-${GRID_VERSION}`;
 const GRID_CACHE_MAX_AGE = 6 * 3600;
-const STEP_SECONDS = 300;
-const MAX_GAP_SECONDS = 1800; // interpolate across at most one missing 15-min frame
+const MAX_GAP_SECONDS = 1800; // estimate motion across at most one missing 15-min frame
 
 let lookup: { key: string; lut: Int32Array } | null = null;
 let refs: FrameRef[] = [];
 /** The worker's own copies of observed frames, needed for interpolation. */
 const observed = new Map<number, Uint8Array>();
-/** Pairs ("t0-t1") whose in-between frames have been sent. */
-const interpolated = new Set<string>();
+/** Pairs ("t0-t1") whose motion has been sent. */
+const estimated = new Set<string>();
 let running = false;
 let rerun = false;
 
@@ -67,7 +66,7 @@ async function loadObserved(cache: Cache | null): Promise<void> {
       const data = await loadFrame(ref, cache);
       observed.set(ref.time, data);
       const copy = data.slice();
-      post({ type: 'frame', time: ref.time, kind: 'observed', data: copy }, [copy.buffer]);
+      post({ type: 'frame', time: ref.time, data: copy }, [copy.buffer]);
     } catch (e) {
       post({ type: 'error', time: ref.time, message: e instanceof Error ? e.message : String(e) });
     }
@@ -76,24 +75,19 @@ async function loadObserved(cache: Cache | null): Promise<void> {
   post({ type: 'idle' });
 }
 
-/** Fill 5-min frames between consecutive observed frames, newest pair first. */
-async function interpolate(): Promise<void> {
+/** Motion between consecutive observed frames, newest pair first. */
+async function estimate(): Promise<void> {
   const times = [...observed.keys()].sort((a, b) => b - a);
   for (let i = 0; i + 1 < times.length; i++) {
     const t1 = times[i];
     const t0 = times[i + 1];
     const gap = t1 - t0;
     const key = `${t0}-${t1}`;
-    if (gap <= STEP_SECONDS || gap > MAX_GAP_SECONDS || interpolated.has(key)) continue;
+    if (gap > MAX_GAP_SECONDS || estimated.has(key)) continue;
 
-    const a = observed.get(t0)!;
-    const b = observed.get(t1)!;
-    const field = estimateMotion(a, b, GRID);
-    for (let t = t0 + STEP_SECONDS; t < t1; t += STEP_SECONDS) {
-      const data = morph(a, b, field, (t - t0) / gap, GRID);
-      post({ type: 'frame', time: t, kind: 'interpolated', data }, [data.buffer]);
-    }
-    interpolated.add(key);
+    const field = estimateMotion(observed.get(t0)!, observed.get(t1)!, GRID);
+    post({ type: 'motion', t0, t1, field }, [field.u.buffer, field.v.buffer]);
+    estimated.add(key);
     await yieldToEvents();
     if (rerun) return;
   }
@@ -109,7 +103,7 @@ async function drain(): Promise<void> {
   do {
     rerun = false;
     await loadObserved(cache);
-    if (!rerun) await interpolate();
+    if (!rerun) await estimate();
   } while (rerun);
   running = false;
   await pruneCache(cache);
@@ -121,9 +115,9 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     refs = msg.frames;
     const wanted = new Set(refs.map((r) => r.time));
     for (const t of observed.keys()) if (!wanted.has(t)) observed.delete(t);
-    for (const key of interpolated) {
+    for (const key of estimated) {
       const [t0, t1] = key.split('-').map(Number);
-      if (!observed.has(t0) || !observed.has(t1)) interpolated.delete(key);
+      if (!observed.has(t0) || !observed.has(t1)) estimated.delete(key);
     }
     void drain();
   }
