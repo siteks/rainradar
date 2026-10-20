@@ -7,14 +7,15 @@ export interface ControlsCallbacks {
 
 /**
  * A slim translucent strip at the bottom: the selected frame's time above a time slider.
- * The track spans the whole timeline (now ± 2 h); the part with frames is highlighted and a tick
- * marks the current time.
+ * The track spans the whole timeline (now ± 2 h): observed frames are highlighted, forecast more
+ * faintly, and a tick marks the current time. Forecast moments get a quiet "forecast" tag.
  */
 export class Controls {
   private readonly track: HTMLElement;
   private readonly slider: HTMLInputElement;
   private readonly clock: HTMLElement;
   private readonly relative: HTMLElement;
+  private readonly tag: HTMLElement;
   private readonly status: HTMLElement;
   private readonly banner: HTMLElement;
   private times: number[] = [];
@@ -25,7 +26,7 @@ export class Controls {
     root.innerHTML = `
       <div class="banner" hidden></div>
       <div class="row" aria-live="polite">
-        <span class="clock">--:--</span><span class="relative"></span><span class="status"></span>
+        <span class="clock">--:--</span><span class="relative"></span><span class="tag" hidden>forecast</span><span class="status"></span>
       </div>
       <div class="track">
         <input class="slider" type="range" min="0" max="0" value="0" step="1" aria-label="Radar time" disabled />
@@ -37,6 +38,7 @@ export class Controls {
     this.slider = root.querySelector('.slider')!;
     this.clock = root.querySelector('.clock')!;
     this.relative = root.querySelector('.relative')!;
+    this.tag = root.querySelector('.tag')!;
     this.status = root.querySelector('.status')!;
     this.banner = root.querySelector('.banner')!;
 
@@ -49,14 +51,17 @@ export class Controls {
     this.slider.max = String(last);
     this.slider.disabled = !t.available || t.available[0] === t.available[1];
     const [a0, a1] = t.available ?? [0, 0];
+    const f0 = t.forecastFrom ?? a1;
     this.track.style.setProperty('--a0', String(a0 / last));
+    this.track.style.setProperty('--f0', String(f0 / last));
     this.track.style.setProperty('--a1', String(a1 / last));
     this.track.style.setProperty('--now', String(Math.min(1, t.now / last)));
-    this.setIndex(index);
+    this.setIndex(index, t.forecastFrom !== null && index > t.forecastFrom);
   }
 
-  setIndex(index: number): void {
+  setIndex(index: number, forecast = false): void {
     this.slider.value = String(index);
+    this.tag.hidden = !forecast;
     const t = this.times[index];
     this.clock.textContent = t === undefined ? '--:--' : formatClock(t);
     this.relative.textContent = t === undefined ? '' : formatRelative(t, Date.now() / 1000);

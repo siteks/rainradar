@@ -31,7 +31,14 @@ Milestones:
   frames; the same day it moved to GPU rendering with continuous time (1-min slider). Verified in
   desktop Chrome; the 5-min version felt smooth on the user's phone.
   Phone performance is still unmeasured.
-- **M3 — model motion forecast** (see "Forecast strategy"), plus verification/replay mode.
+- **M3a — radar-only forecast: done** (2026-10-20). Each future minute extrapolates the latest frame
+  along a frozen motion field (method (c) below), out to the end of the timeline (now + 2 h). The
+  field is a 3:2:1-weighted mean of the last three pair fields (`src/radar/forecast.ts`). The shader
+  traces each pixel back in ≤5-min semi-Lagrangian steps. There's no growth or decay yet.
+  - Also added: a location dot (`RadarMap.watchLocation`). It uses `watchPosition` while the page is
+    visible and shows only when permission is granted. The locate button only recentres the map
+    (`showUserLocation: false`). The dot is untested in a browser (needs a real permission grant).
+- **M3b — model motion forecast** (see "Forecast strategy"), plus verification/replay mode.
 - **M4 — polish:** a "rain at my location" graph, settings, and maybe the MOGREPS chance-of-rain layer.
 
 The research notes below date from **2026-10-20**. Re-verify anything marked *(verify)* before relying on it.
@@ -288,13 +295,16 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
      - Transparent palette entries carry the first visible colour's RGB, so linear filtering doesn't
        fade light rain through black.
   7. **Choosing frames** (`src/radar/timeline.ts`): `pickFrames(t)` returns the bracketing observed
-     frames and α, or the nearest frame (α = 0) until that pair's motion has arrived.
+     frames and α, or the nearest frame (α = 0) until that pair's motion has arrived. Past the latest
+     frame it returns `lead` (seconds), and the shader switches to extrapolation (`uSteps > 0`) with
+     the `forecast` field texture.
      `App.show()` labels the slider with the time actually shown. The layer sits under the basemap's
      first symbol layer, so labels stay on top.
 - **Timeline** (`App.rebuild`, `Controls.setTimeline`): 1-min slots from now − 2 h to now + 2 h,
   rebuilt every minute so "now" stays roughly central. A tick marks the exact current time, and the
-  observed range is highlighted on the track. Shift+arrow moves 15 min. The future half clamps to
-  the latest frame until forecasts exist (M3). The listing fetches one extra frame before the
+  observed range is highlighted on the track and the forecast range more faintly (`--f0`…`--a1`).
+  Shift+arrow moves 15 min. "Follow latest" means the newest *observed* frame, not the end of the
+  forecast. The listing fetches one extra frame before the
   window, so the earliest minutes can be interpolated.
 - **Place labels** (`src/map/places.ts`): our own population-ranked labels replace the basemap's
   town/city labels over GB, Ireland and the Isle of Man below zoom 8.

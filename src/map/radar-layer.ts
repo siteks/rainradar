@@ -1,4 +1,5 @@
 import type { CustomLayerInterface, CustomRenderMethodInput, Map as MLMap } from 'maplibre-gl';
+import { FORECAST_REF_SECONDS } from '../radar/forecast';
 import { GRID, type MercatorGrid } from '../radar/grid';
 import { PALETTE } from '../radar/palette';
 import { pairKey, type FramePick } from '../radar/timeline';
@@ -8,6 +9,8 @@ import type { MotionField } from '../worker/motion';
 // textures of quantised rain (palette.ts encoding), motion fields are small RG16F textures, and the
 // fragment shader samples frame A back along the motion and frame B forward along it, blends them
 // in log-rain space and colours the result. So time is continuous: nothing is precomputed per minute.
+// Past the latest frame it extrapolates instead: each pixel is traced back through the (frozen)
+// forecast motion field in short semi-Lagrangian steps, and the latest frame is sampled there.
 
 const VERTEX = `#version 300 es
 uniform mat4 uMatrix;
@@ -30,6 +33,8 @@ uniform vec2 uGrid;
 uniform vec2 uFieldScale;   // grid px → field texture coords
 uniform float uAlpha;
 uniform float uOpacity;
+uniform int uSteps;         // > 0: extrapolate A along uField in this many steps
+uniform float uStepScale;   // fraction of uField's displacement per step
 in vec2 vPix;
 out vec4 outColor;
 
@@ -51,19 +56,30 @@ vec2 sampleQ(sampler2D tex, vec2 p) {
   return vec2(w > 0.0 ? q / w : 0.0, w);
 }
 
+vec4 colour(float q) {
+  return q < 1.5 ? vec4(0.0) : texture(uPalette, vec2((q + 0.5) / 256.0, 0.5));
+}
+
 void main() {
-  vec2 d = texture(uField, vPix * uFieldScale).rg;
-  vec2 a = sampleQ(uA, vPix - uAlpha * d);
-  vec2 b = sampleQ(uB, vPix + (1.0 - uAlpha) * d);
-  // Where one side has no data, use the other (as morph() does on the CPU).
-  float wa = a.y >= 0.5 ? max(1.0 - uAlpha, 1e-3) : 0.0;
-  float wb = b.y >= 0.5 ? max(uAlpha, 1e-3) : 0.0;
   vec4 c;
-  if (wa + wb == 0.0) {
-    c = texelFetch(uPalette, ivec2(0, 0), 0); // no data
+  vec4 noData = texelFetch(uPalette, ivec2(0, 0), 0);
+  if (uSteps > 0) {
+    // Backward trajectory: where did the rain now at this pixel come from?
+    vec2 p = vPix;
+    for (int i = 0; i < 64; i++) {
+      if (i >= uSteps) break;
+      p -= uStepScale * texture(uField, p * uFieldScale).rg;
+    }
+    vec2 a = sampleQ(uA, p);
+    c = a.y >= 0.5 ? colour(a.x) : noData; // rain arriving from outside coverage is unknown
   } else {
-    float q = (a.x * wa + b.x * wb) / (wa + wb);
-    c = q < 1.5 ? vec4(0.0) : texture(uPalette, vec2((q + 0.5) / 256.0, 0.5));
+    vec2 d = texture(uField, vPix * uFieldScale).rg;
+    vec2 a = sampleQ(uA, vPix - uAlpha * d);
+    vec2 b = sampleQ(uB, vPix + (1.0 - uAlpha) * d);
+    // Where one side has no data, use the other (as morph() does on the CPU).
+    float wa = a.y >= 0.5 ? max(1.0 - uAlpha, 1e-3) : 0.0;
+    float wb = b.y >= 0.5 ? max(uAlpha, 1e-3) : 0.0;
+    c = wa + wb == 0.0 ? noData : colour((a.x * wa + b.x * wb) / (wa + wb));
   }
   float alpha = c.a * uOpacity;
   outColor = vec4(c.rgb * alpha, alpha); // MapLibre blends premultiplied
@@ -78,6 +94,8 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
 }
 
 const MERC_HALF = Math.PI * 6378137;
+const FORECAST_KEY = 'forecast';
+const FORECAST_STEP_SECONDS = 300; // semi-Lagrangian step length
 const mercUnit = (x: number, y: number): [number, number] => [(x + MERC_HALF) / (2 * MERC_HALF), (MERC_HALF - y) / (2 * MERC_HALF)];
 
 /**
@@ -132,10 +150,18 @@ export class RadarLayer implements CustomLayerInterface {
     this.pending.push({ kind: 'field', key });
   }
 
-  /** Drop frames and fields not listed (GPU textures are freed on the next render). */
-  retain(times: Set<number>, keys: Set<string>): void {
+  /** The frozen motion (displacement per FORECAST_REF_SECONDS) used to extrapolate the latest frame. */
+  setForecastField(field: MotionField | null): void {
+    if (field) {
+      this.fields.set(FORECAST_KEY, field);
+      this.pending.push({ kind: 'field', key: FORECAST_KEY });
+    } else this.fields.delete(FORECAST_KEY);
+  }
+
+  /** Drop frames and pair fields not listed (GPU textures are freed on the next render). */
+  retain(times: Set<number>, keys: { has(key: string): boolean }): void {
     for (const t of this.frames.keys()) if (!times.has(t)) this.frames.delete(t);
-    for (const k of this.fields.keys()) if (!keys.has(k)) this.fields.delete(k);
+    for (const k of this.fields.keys()) if (k !== FORECAST_KEY && !keys.has(k)) this.fields.delete(k);
   }
 
   show(pick: FramePick | null): void {
@@ -154,7 +180,7 @@ export class RadarLayer implements CustomLayerInterface {
     g.linkProgram(program);
     if (!g.getProgramParameter(program, g.LINK_STATUS)) throw new Error(`Radar program: ${g.getProgramInfoLog(program)}`);
     this.program = program;
-    for (const name of ['uMatrix', 'uBounds', 'uGrid', 'uA', 'uB', 'uField', 'uPalette', 'uFieldScale', 'uAlpha', 'uOpacity']) {
+    for (const name of ['uMatrix', 'uBounds', 'uGrid', 'uA', 'uB', 'uField', 'uPalette', 'uFieldScale', 'uAlpha', 'uOpacity', 'uSteps', 'uStepScale']) {
       this.uniforms[name] = g.getUniformLocation(program, name);
     }
 
@@ -263,8 +289,12 @@ export class RadarLayer implements CustomLayerInterface {
     const texA = pick && this.frameTex.get(pick.a);
     const texB = pick && this.frameTex.get(pick.b);
     if (!pick || !texA || !texB) return;
-    const field = pick.alpha > 0 ? this.fields.get(pairKey(pick.a, pick.b)) : undefined;
-    const fieldTex = (field && this.fieldTex.get(pairKey(pick.a, pick.b))) || this.zeroField;
+    // Forecast: extrapolate frame A along the forecast field. Otherwise blend A→B along the pair field.
+    const forecast = pick.lead > 0 && this.fieldTex.has(FORECAST_KEY) ? this.fields.get(FORECAST_KEY) : undefined;
+    const fieldKey = forecast ? FORECAST_KEY : pairKey(pick.a, pick.b);
+    const field = forecast ?? (pick.alpha > 0 ? this.fields.get(fieldKey) : undefined);
+    const fieldTex = (field && this.fieldTex.get(fieldKey)) || this.zeroField;
+    const steps = forecast ? Math.min(64, Math.max(1, Math.ceil(pick.lead / FORECAST_STEP_SECONDS))) : 0;
 
     const gr = this.grid;
     const [x0, y0] = mercUnit(gr.x0, gr.y0);
@@ -277,7 +307,9 @@ export class RadarLayer implements CustomLayerInterface {
     g.uniform4f(u.uBounds, x0, y0, x1, y1);
     g.uniform2f(u.uGrid, gr.width, gr.height);
     g.uniform2f(u.uFieldScale, field ? 1 / (field.step * field.cols) : 0, field ? 1 / (field.step * field.rows) : 0);
-    g.uniform1f(u.uAlpha, field ? pick.alpha : 0);
+    g.uniform1f(u.uAlpha, field && !forecast ? pick.alpha : 0);
+    g.uniform1i(u.uSteps, steps);
+    g.uniform1f(u.uStepScale, steps ? pick.lead / FORECAST_REF_SECONDS / steps : 0);
     g.uniform1f(u.uOpacity, this.opacity);
 
     const bind = (unit: number, tex: WebGLTexture, name: string): void => {
@@ -286,7 +318,7 @@ export class RadarLayer implements CustomLayerInterface {
       g.uniform1i(u[name], unit);
     };
     bind(0, texA, 'uA');
-    bind(1, field ? texB : texA, 'uB');
+    bind(1, field && !forecast ? texB : texA, 'uB');
     bind(2, fieldTex!, 'uField');
     bind(3, this.paletteTex!, 'uPalette');
 

@@ -4,6 +4,7 @@
   --muted: #3f5064;
   --accent: #1f6fe0;
   --track-on: rgba(31, 111, 224, 0.5);
+  --track-fc: rgba(31, 111, 224, 0.25);
   --track-off: rgba(16, 35, 58, 0.15);
   --thumb-ring: #fff;
   --attrib-bg: rgba(255, 255, 255, 0.45);
@@ -20,6 +21,7 @@
     --muted: #b3c0cf;
     --accent: #5aa0ff;
     --track-on: rgba(90, 160, 255, 0.55);
+    --track-fc: rgba(90, 160, 255, 0.28);
     --track-off: rgba(232, 238, 246, 0.18);
     --thumb-ring: #1a2533;
     --attrib-bg: rgba(18, 26, 38, 0.45);
@@ -81,6 +83,16 @@ body,
   color: var(--muted);
 }
 
+.controls .tag {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--muted);
+}
+
+.controls .tag[hidden] {
+  display: none;
+}
+
 .controls .status {
   margin-left: auto;
   font-size: 11px;
@@ -92,6 +104,7 @@ body,
   --thumb: 18px;
   /* Positions along the track, matching where the native thumb centre sits for a value. */
   --a0-x: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--a0, 0));
+  --f0-x: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--f0, 0));
   --a1-x: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--a1, 0));
 }
 
@@ -112,7 +125,8 @@ body,
   background: linear-gradient(
     to right,
     var(--track-off) 0 var(--a0-x),
-    var(--track-on) var(--a0-x) var(--a1-x),
+    var(--track-on) var(--a0-x) var(--f0-x),
+    var(--track-fc) var(--f0-x) var(--a1-x),
     var(--track-off) var(--a1-x) 100%
   );
 }
@@ -123,7 +137,8 @@ body,
   background: linear-gradient(
     to right,
     var(--track-off) 0 var(--a0-x),
-    var(--track-on) var(--a0-x) var(--a1-x),
+    var(--track-on) var(--a0-x) var(--f0-x),
+    var(--track-fc) var(--f0-x) var(--a1-x),
     var(--track-off) var(--a1-x) 100%
   );
 }
@@ -215,4 +230,15 @@ body,
 
 .maplibregl-ctrl-attrib a {
   color: inherit;
+}
+
+.location-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid #fff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.15),
+    0 1px 4px rgba(0, 0, 0, 0.35);
 }

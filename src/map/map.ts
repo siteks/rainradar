@@ -1,4 +1,4 @@
-import { AttributionControl, GeolocateControl, Map as MLMap, setWorkerUrl } from 'maplibre-gl';
+import { AttributionControl, GeolocateControl, Map as MLMap, Marker, setWorkerUrl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { addPlaceLabels } from './places';
@@ -60,15 +60,18 @@ export class RadarMap {
     });
     this.map.touchZoomRotate.disableRotation();
 
+    // The button only recentres the map; our own dot (watchLocation) shows where the phone is.
     const geolocate = new GeolocateControl({
       positionOptions: { enableHighAccuracy: false },
       trackUserLocation: true,
+      showUserLocation: false,
       fitBoundsOptions: { maxZoom: 8 },
     });
     this.map.addControl(geolocate, 'top-right');
     // Credits sit at the top, level with the locate button, always expanded but translucent.
     this.map.addControl(new AttributionControl({ compact: false, customAttribution: ATTRIBUTION }), 'top-left');
     this.map.on('moveend', () => saveView(this.map));
+    this.watchLocation();
 
     this.map.on('load', () => {
       // Put rain under the place labels so towns stay readable.
@@ -77,5 +80,35 @@ export class RadarMap {
       addPlaceLabels(this.map);
       if (!saved) geolocate.trigger();
     });
+  }
+
+  /** A dot at the phone's position whenever location access is allowed. It never moves the map. */
+  private watchLocation(): void {
+    if (!('geolocation' in navigator)) return;
+    const el = document.createElement('div');
+    el.className = 'location-dot';
+    const marker = new Marker({ element: el });
+    let watch: number | null = null;
+    let added = false;
+    const start = (): void => {
+      if (watch !== null) return;
+      watch = navigator.geolocation.watchPosition(
+        (pos) => {
+          marker.setLngLat([pos.coords.longitude, pos.coords.latitude]);
+          if (!added) {
+            marker.addTo(this.map);
+            added = true;
+          }
+        },
+        () => {}, // denied or unavailable: simply no dot
+        { enableHighAccuracy: false, maximumAge: 60_000, timeout: 30_000 },
+      );
+    };
+    const stop = (): void => {
+      if (watch !== null) navigator.geolocation.clearWatch(watch);
+      watch = null;
+    };
+    document.addEventListener('visibilitychange', () => (document.visibilityState === 'visible' ? start() : stop()));
+    if (document.visibilityState === 'visible') start();
   }
 }
