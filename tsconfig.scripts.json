@@ -1,0 +1,9 @@
+{
+  // Node-side TypeScript (scripts/*.ts run with tsx). Kept apart so browser code can't use Node APIs.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts", "src/types"]
+}

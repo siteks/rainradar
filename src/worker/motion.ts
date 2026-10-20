@@ -291,8 +291,8 @@ function smoothField(field: MotionField, conf: Float32Array): MotionField {
   return { ...field, u: outU, v: outV };
 }
 
-/** Displacement at a pixel, bilinearly interpolated between nodes. */
-function sampleField(f: MotionField, x: number, y: number): [number, number] {
+/** Displacement at a pixel, bilinearly interpolated between nodes (like a linearly filtered texture). */
+export function sampleField(f: MotionField, x: number, y: number): [number, number] {
   const gx = Math.min(f.cols - 1, Math.max(0, x / f.step - 0.5));
   const gy = Math.min(f.rows - 1, Math.max(0, y / f.step - 0.5));
   const i = Math.min(f.cols - 2, Math.floor(gx));

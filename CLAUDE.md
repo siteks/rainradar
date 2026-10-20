@@ -53,6 +53,10 @@ The research notes below date from **2026-10-20**. Re-verify anything marked *(v
 - `npm run build` — typecheck + production build into `dist/`. `npm run preview` serves it, with the
   service worker.
 - `node scripts/make-icons.mjs` — regenerates `public/icons/` (drawn in code; there's no image tooling).
+- `npm run verify -- --from YYYY-MM-DD --to YYYY-MM-DD [--every 60] [--leads 15,30,60,90,120]` —
+  replays past radar and scores forecast methods (see "Verification"). TypeScript scripts in
+  `scripts/*.ts` run with `tsx` and are typechecked via `tsconfig.scripts.json`, which keeps Node
+  types out of browser code.
 - `node scripts/archive-model.mjs --out data/model-archive [--days 6]` — saves UKV model slices
   locally; `node scripts/inspect-archive.mjs <file>` summarises one. See "Model archive".
 - `node scripts/fetch-places.mjs` — regenerates `src/map/places.json` (the place labels). It needs network
@@ -244,6 +248,46 @@ Engineering notes:
   difference in units hardly matters.
 - `@openmeteo/weather-map-layer` is still useful as a debug overlay: show the model's own rain next to
   the warped radar.
+
+## Verification
+
+`scripts/verify.ts`, with `src/verify/metrics.ts` and `src/radar/extrapolate.ts`, replays issue
+times T.
+- **Inputs:** frames T−45…T give 3 pair fields, which `forecastField` averages, exactly as the app does.
+- **Methods at T + lead:**
+  - persistence;
+  - a straight line (`uniformField`: the median vector everywhere);
+  - the flow field (`extrapolate`, a CPU copy of the shader's forecast mode, step for step).
+- **Scores, summed over cases:** CSI and frequency bias at 0.5 and 2 mm/h, and FSS at 0.5 mm/h with
+  11 px (≈15 km) and 31 px (≈45 km) windows. Pixels where either side has no data are skipped.
+- **Data:** radar comes from the AWS archive (2 years), and frames are cached as gzipped grid bytes in
+  `data/verify-cache-<GRID_VERSION>/`. Results go to `data/verify/<from>_<to>.json`.
+- **Speed:** about 15–20 s of computation per issue time (two extrapolations plus 36 FSS
+  accumulations).
+
+Findings, 2026-10-14…19 (72 cases every 2 h; mostly frontal, with some warm showery spells):
+- **The flow field is best or joint-best everywhere**, with the biggest margin in the first 45 min.
+  CSI ≥ 0.5 mm/h at 15 min: 0.58, against 0.54 for the straight line and 0.45 for persistence.
+- **Useful to 2 h for "rain around here"**: FSS ≥ 0.5 mm/h at 120 min is 0.53 at 15 km and 0.64 at
+  45 km, with the useful line ≈ 0.52. Persistence drops below the line after ~90 min.
+- **Beyond ~60 min the dense field adds little over one vector** (+0.01–0.03).
+- **Heavy rain (≥ 2 mm/h) is the weak spot**: CSI falls from 0.40 at 15 min to 0.19 at 60 min, and
+  by 90–120 min nothing beats persistence. Cell growth and decay dominate, and motion can't fix that.
+- **The rain area stays right** (bias 0.97–1.01).
+- **Implication for M3b:** the model's main value is probably **growth/decay** (scaling intensity
+  along trajectories), more than motion.
+
+Findings, 2026-09-08…10-19 (168 cases every 6 h, six weeks; includes the week above):
+- **The ranking is the same, and scores are slightly higher.** Flow-field CSI ≥ 0.5 mm/h is
+  0.59/0.49/0.42/0.38/0.31/0.27 at 15/30/45/60/90/120 min.
+- **FSS at 2 h:** 0.56 at 15 km and 0.67 at 45 km, against a useful line of ≈ 0.53. Persistence
+  falls below the 15 km line after ~80 min.
+- **The dense field beats one vector by 0.05 CSI at 15 min, and 0.01–0.04 after that.**
+- **Heavy rain (≥ 2 mm/h):** CSI is 0.41 at 15 min, 0.21 at 60 min and 0.13 at 120 min. Unlike the
+  showery week, the flow field stays ahead of persistence at every lead (0.13 against 0.10 at
+  120 min). The earlier result, where nothing beat persistence late on, came from the warm spell of
+  short-lived convective cells. Growth/decay remains the main gap.
+- **Bias stays at 0.97–1.04** throughout.
 
 ## Model archive
 
