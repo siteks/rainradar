@@ -264,3 +264,21 @@ body,
   font-style: italic;
   color: var(--muted);
 }
+
+.refresh-button svg {
+  width: 20px;
+  height: 20px;
+  margin: auto;
+  display: block;
+  fill: #333;
+}
+
+.refresh-button.busy svg {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

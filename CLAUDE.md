@@ -330,6 +330,9 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
   observed range is highlighted on the track and the forecast range more faintly (`--f0`…`--a1`).
   Shift+arrow moves 15 min. The app opens on **now** (normally a short forecast, since radar lags
   ~15 min) and follows it as the clock moves, until the user picks another time (`followNow`).
+- **Refresh button** (`RefreshControl` in `map.ts`, under the locate button): runs the same refresh
+  as the 5-min timer and keeps the selected time. It spins until the new frames are loaded and the
+  newest frame's motion (and so the forecast) exists, with a minimum spin of 0.7 s.
 - **Offset pill** (top centre, below the credits): shows the selected moment relative to now
   ("Now", "−25 min", "+1 h 05"), plus "forecast" when extrapolated. It stays readable while a thumb
   covers the bottom strip. The bottom row keeps just the clock time and loading status. The listing fetches one extra frame before the

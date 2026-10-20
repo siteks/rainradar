@@ -1,4 +1,4 @@
-import { AttributionControl, GeolocateControl, Map as MLMap, Marker, setWorkerUrl } from 'maplibre-gl';
+import { AttributionControl, GeolocateControl, Map as MLMap, Marker, setWorkerUrl, type IControl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { addPlaceLabels } from './places';
@@ -14,6 +14,40 @@ const ATTRIBUTION =
   'Radar <a href="https://www.metoffice.gov.uk/" target="_blank" rel="noopener">© Met Office</a> ' +
   '<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA</a> · ' +
   'Places <a href="https://www.geonames.org/" target="_blank" rel="noopener">GeoNames</a>';
+
+/** A map button (under the locate button) that fetches the latest radar; spins while busy. */
+class RefreshControl implements IControl {
+  private el: HTMLElement | null = null;
+  private button: HTMLButtonElement | null = null;
+
+  constructor(private readonly onRefresh: () => void) {}
+
+  onAdd(): HTMLElement {
+    const el = document.createElement('div');
+    el.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'refresh-button';
+    button.title = 'Fetch latest radar';
+    button.setAttribute('aria-label', 'Fetch latest radar');
+    button.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
+    button.addEventListener('click', () => this.onRefresh());
+    el.appendChild(button);
+    this.el = el;
+    this.button = button;
+    return el;
+  }
+
+  onRemove(): void {
+    this.el?.remove();
+  }
+
+  setBusy(busy: boolean): void {
+    this.button?.classList.toggle('busy', busy);
+    this.button?.setAttribute('aria-busy', String(busy));
+  }
+}
 
 interface SavedView {
   center: [number, number];
@@ -42,8 +76,9 @@ function saveView(map: MLMap): void {
 export class RadarMap {
   readonly map: MLMap;
   readonly radar = new RadarLayer();
+  private readonly refreshControl: RefreshControl;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, onRefresh: () => void) {
     const saved = loadView();
     const dark = matchMedia('(prefers-color-scheme: dark)').matches;
     this.map = new MLMap({
@@ -68,6 +103,8 @@ export class RadarMap {
       fitBoundsOptions: { maxZoom: 8 },
     });
     this.map.addControl(geolocate, 'top-right');
+    this.refreshControl = new RefreshControl(onRefresh);
+    this.map.addControl(this.refreshControl, 'top-right');
     // Credits sit at the top, level with the locate button, always expanded but translucent.
     this.map.addControl(new AttributionControl({ compact: false, customAttribution: ATTRIBUTION }), 'top-left');
     this.map.on('moveend', () => saveView(this.map));
@@ -80,6 +117,10 @@ export class RadarMap {
       addPlaceLabels(this.map);
       if (!saved) geolocate.trigger();
     });
+  }
+
+  setRefreshing(busy: boolean): void {
+    this.refreshControl.setBusy(busy);
   }
 
   /** A dot at the phone's position whenever location access is allowed. It never moves the map. */

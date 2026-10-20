@@ -16,6 +16,7 @@ const PAST_SECONDS = 2 * 3600;
 const FUTURE_SECONDS = 2 * 3600;
 const REFRESH_MS = 5 * 60 * 1000;
 const STALE_SECONDS = 40 * 60;
+const MIN_SPIN_MS = 700; // keep the refresh button spinning long enough to register
 
 export interface Timeline {
   /** Slot times (UTC epoch seconds), every SLOT_SECONDS. */
@@ -44,12 +45,15 @@ export class App {
   private loading = true;
   private lastRefresh = 0;
   private offline = false;
+  /** Refresh button pressed and the new data isn't fully in yet. */
+  private refreshing = false;
+  private refreshStarted = 0;
 
   constructor(root: HTMLElement) {
     const mapEl = document.createElement('div');
     mapEl.className = 'map';
     root.appendChild(mapEl);
-    this.map = new RadarMap(mapEl);
+    this.map = new RadarMap(mapEl, () => this.manualRefresh());
     this.controls = new Controls(root, { onSeek: (i) => this.seekSlot(i) });
 
     this.worker = new RadarWorker();
@@ -66,6 +70,26 @@ export class App {
     window.addEventListener('keydown', (e) => this.onKey(e));
 
     void this.refresh();
+  }
+
+  /** Refresh button: fetch the latest radar and re-forecast, keeping the selected time. */
+  private manualRefresh(): void {
+    if (this.refreshing) return;
+    this.refreshing = true;
+    this.refreshStarted = Date.now();
+    this.map.setRefreshing(true);
+    void this.refresh();
+  }
+
+  /** The refresh is done once frames are loaded and the newest frame's motion (the forecast) exists. */
+  private checkRefreshDone(): void {
+    if (!this.refreshing) return;
+    const latest = this.observed[this.observed.length - 1];
+    const forecastCurrent = latest === undefined || this.observed.length < 2 || [...this.fields.keys()].some((k) => k.endsWith(`-${latest}`));
+    if (!this.offline && (this.loading || !forecastCurrent)) return;
+    this.refreshing = false;
+    const remaining = MIN_SPIN_MS - (Date.now() - this.refreshStarted);
+    setTimeout(() => this.map.setRefreshing(false), Math.max(0, remaining));
   }
 
   private async refresh(): Promise<void> {
@@ -181,6 +205,7 @@ export class App {
   }
 
   private updateStatus(): void {
+    this.checkRefreshDone();
     const newest = this.observed[this.observed.length - 1];
     const age = newest === undefined ? Infinity : Date.now() / 1000 - newest;
 
