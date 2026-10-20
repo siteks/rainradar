@@ -198,6 +198,10 @@ async function archiveDay(day, runs) {
   return gzipSync(Buffer.concat([len, json, ...chunks]), { level: 9 });
 }
 
+// A failed request that nothing awaits (e.g. a cache read-ahead) must not kill the run: reads that
+// matter fail on their own awaited promise, which withRetry and the per-day handling deal with.
+process.on('unhandledRejection', (e) => console.warn(`  background request failed: ${e?.cause?.code ?? e?.message ?? e}`));
+
 mkdirSync(outDir, { recursive: true });
 const today = new Date();
 today.setUTCHours(0, 0, 0, 0);
