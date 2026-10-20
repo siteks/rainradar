@@ -39,7 +39,8 @@ export class App {
   private refs: FrameRef[] = [];
   private timeline: Timeline = { times: [], available: null, forecastFrom: null, now: 0 };
   private selected: number | null = null; // selected time, on a slot
-  private followLatest = true;
+  /** Keep the selection on "now" as the clock moves (until the user picks another time). */
+  private followNow = true;
   private loading = true;
   private lastRefresh = 0;
   private offline = false;
@@ -143,9 +144,8 @@ export class App {
       now: (now - start) / SLOT_SECONDS,
     };
 
-    // "Latest" means the newest observed frame, not the end of the forecast.
-    const latest = inWindow[inWindow.length - 1] ?? null;
-    if (this.followLatest || this.selected === null || this.selected < start) this.selected = latest;
+    const nowSlot = Math.floor(now / SLOT_SECONDS) * SLOT_SECONDS;
+    if (this.followNow || this.selected === null || this.selected < start) this.selected = nowSlot;
     this.controls.setTimeline(this.timeline, this.selected === null ? Math.floor(this.timeline.now) : slot(this.selected));
     this.show();
     this.updateStatus();
@@ -157,7 +157,7 @@ export class App {
     if (!available) return;
     const i = Math.min(Math.max(index, available[0]), available[1]);
     this.selected = times[i];
-    this.followLatest = this.selected === this.observed[this.observed.length - 1];
+    this.followNow = this.selected === Math.floor(Date.now() / 1000 / SLOT_SECONDS) * SLOT_SECONDS;
     this.show();
   }
 

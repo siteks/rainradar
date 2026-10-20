@@ -1,21 +1,24 @@
 import type { Timeline } from '../app';
-import { formatClock, formatRelative } from './time';
+import { formatClock, formatOffset } from './time';
 
 export interface ControlsCallbacks {
   onSeek(index: number): void;
 }
 
 /**
- * A slim translucent strip at the bottom: the selected frame's time above a time slider.
+ * A slim translucent strip at the bottom: the selected moment's clock time above a time slider,
+ * plus a pill near the top showing the offset from now (visible while a thumb covers the strip).
  * The track spans the whole timeline (now ± 2 h): observed frames are highlighted, forecast more
- * faintly, and a tick marks the current time. Forecast moments get a quiet "forecast" tag.
+ * faintly, and a tick marks the current time. Forecast moments get a quiet
+ * "forecast" tag in the top pill.
  */
 export class Controls {
   private readonly track: HTMLElement;
   private readonly slider: HTMLInputElement;
   private readonly clock: HTMLElement;
-  private readonly relative: HTMLElement;
-  private readonly tag: HTMLElement;
+  private readonly offset: HTMLElement;
+  private readonly offsetMins: HTMLElement;
+  private readonly offsetKind: HTMLElement;
   private readonly status: HTMLElement;
   private readonly banner: HTMLElement;
   private times: number[] = [];
@@ -26,7 +29,7 @@ export class Controls {
     root.innerHTML = `
       <div class="banner" hidden></div>
       <div class="row" aria-live="polite">
-        <span class="clock">--:--</span><span class="relative"></span><span class="tag" hidden>forecast</span><span class="status"></span>
+        <span class="clock">--:--</span><span class="status"></span>
       </div>
       <div class="track">
         <input class="slider" type="range" min="0" max="0" value="0" step="1" aria-label="Radar time" disabled />
@@ -34,11 +37,18 @@ export class Controls {
       </div>`;
     parent.appendChild(root);
 
+    this.offset = document.createElement('div');
+    this.offset.className = 'offset';
+    this.offset.setAttribute('aria-hidden', 'true'); // the slider row already announces the time
+    this.offset.innerHTML = '<span class="mins"></span><span class="kind" hidden>forecast</span>';
+    this.offset.hidden = true;
+    parent.appendChild(this.offset);
+
     this.track = root.querySelector('.track')!;
     this.slider = root.querySelector('.slider')!;
     this.clock = root.querySelector('.clock')!;
-    this.relative = root.querySelector('.relative')!;
-    this.tag = root.querySelector('.tag')!;
+    this.offsetMins = this.offset.querySelector('.mins')!;
+    this.offsetKind = this.offset.querySelector('.kind')!;
     this.status = root.querySelector('.status')!;
     this.banner = root.querySelector('.banner')!;
 
@@ -61,10 +71,12 @@ export class Controls {
 
   setIndex(index: number, forecast = false): void {
     this.slider.value = String(index);
-    this.tag.hidden = !forecast;
     const t = this.times[index];
     this.clock.textContent = t === undefined ? '--:--' : formatClock(t);
-    this.relative.textContent = t === undefined ? '' : formatRelative(t, Date.now() / 1000);
+    this.offset.hidden = t === undefined;
+    this.offset.classList.toggle('forecast', forecast);
+    this.offsetMins.textContent = t === undefined ? '' : formatOffset(t, Date.now() / 1000);
+    this.offsetKind.hidden = !forecast;
   }
 
   setStatus(text: string): void {

@@ -5,11 +5,12 @@ export function formatClock(t: number): string {
   return clockFmt.format(new Date(t * 1000));
 }
 
-/** "now", "25 min ago", "1 h 10 min ago", "in 40 min". */
-export function formatRelative(t: number, now: number): string {
-  const mins = Math.round((t - now) / 60);
-  if (Math.abs(mins) < 3) return 'now';
+/** Offset from now for the top display: "Now", "−25 min", "+40 min", "+1 h 05". */
+export function formatOffset(t: number, now: number): string {
+  // Whole minutes, so the current minute's slot reads "Now" for the whole minute.
+  const mins = Math.round(t / 60) - Math.floor(now / 60);
+  if (mins === 0) return 'Now';
+  const sign = mins < 0 ? '−' : '+';
   const abs = Math.abs(mins);
-  const span = abs < 60 ? `${abs} min` : `${Math.floor(abs / 60)} h${abs % 60 ? ` ${abs % 60} min` : ''}`;
-  return mins < 0 ? `${span} ago` : `in ${span}`;
+  return abs < 60 ? `${sign}${abs} min` : `${sign}${Math.floor(abs / 60)} h ${String(abs % 60).padStart(2, '0')}`;
 }

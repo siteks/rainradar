@@ -303,8 +303,11 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
 - **Timeline** (`App.rebuild`, `Controls.setTimeline`): 1-min slots from now − 2 h to now + 2 h,
   rebuilt every minute so "now" stays roughly central. A tick marks the exact current time, and the
   observed range is highlighted on the track and the forecast range more faintly (`--f0`…`--a1`).
-  Shift+arrow moves 15 min. "Follow latest" means the newest *observed* frame, not the end of the
-  forecast. The listing fetches one extra frame before the
+  Shift+arrow moves 15 min. The app opens on **now** (normally a short forecast, since radar lags
+  ~15 min) and follows it as the clock moves, until the user picks another time (`followNow`).
+- **Offset pill** (top centre, below the credits): shows the selected moment relative to now
+  ("Now", "−25 min", "+1 h 05"), plus "forecast" when extrapolated. It stays readable while a thumb
+  covers the bottom strip. The bottom row keeps just the clock time and loading status. The listing fetches one extra frame before the
   window, so the earliest minutes can be interpolated.
 - **Place labels** (`src/map/places.ts`): our own population-ranked labels replace the basemap's
   town/city labels over GB, Ireland and the Isle of Man below zoom 8.
