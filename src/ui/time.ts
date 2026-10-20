@@ -14,3 +14,9 @@ export function formatOffset(t: number, now: number): string {
   const abs = Math.abs(mins);
   return abs < 60 ? `${sign}${abs} min` : `${sign}${Math.floor(abs / 60)} h ${String(abs % 60).padStart(2, '0')}`;
 }
+
+/** Age of the latest radar for the status box: "radar 14 min old", "radar 1 h 05 old". */
+export function formatAge(latest: number, now: number): string {
+  const mins = Math.max(0, Math.floor((now - latest) / 60));
+  return mins < 60 ? `radar ${mins} min old` : `radar ${Math.floor(mins / 60)} h ${String(mins % 60).padStart(2, '0')} old`;
+}

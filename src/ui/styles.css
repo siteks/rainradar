@@ -9,6 +9,8 @@
   --thumb-ring: #fff;
   --attrib-bg: rgba(255, 255, 255, 0.45);
   --attrib-fg: rgba(16, 35, 58, 0.75);
+  --divider: rgba(16, 35, 58, 0.35);
+  --stale: #c25e00;
   --banner-bg: #fff3cd;
   --banner-fg: #5c4400;
   color-scheme: light dark;
@@ -26,6 +28,8 @@
     --thumb-ring: #1a2533;
     --attrib-bg: rgba(18, 26, 38, 0.45);
     --attrib-fg: rgba(232, 238, 246, 0.75);
+    --divider: rgba(232, 238, 246, 0.35);
+    --stale: #ffa040;
     --banner-bg: #4a3b00;
     --banner-fg: #ffe8a3;
   }
@@ -228,17 +232,16 @@ body,
     0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
-/* Offset from now, top centre below the credits; readable while a thumb is on the slider. */
-.offset {
+/* One-line status box, top centre below the credits; readable while a thumb is on the slider. */
+.status-box {
   position: absolute;
   top: calc(env(safe-area-inset-top) + 52px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 3px 12px;
-  border-radius: 999px;
+  align-items: center;
+  padding: 3px 4px;
+  border-radius: 10px;
   background: var(--panel-bg);
   color: var(--panel-fg);
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
@@ -249,18 +252,36 @@ body,
   white-space: nowrap;
 }
 
-.offset[hidden],
-.offset .kind[hidden] {
+.status-box[hidden],
+.status-box > [hidden] {
   display: none;
 }
 
-.offset .mins {
+.status-box > span {
+  padding: 0 8px;
+}
+
+.status-box > span:not([hidden]) ~ span:not([hidden]) {
+  border-left: 1px solid var(--divider);
+}
+
+.status-box .age {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.status-box .age.stale {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+.status-box .mins {
   font-size: 18px;
   font-weight: 600;
 }
 
-.offset .kind {
-  font-size: 11px;
+.status-box .kind {
+  font-size: 12px;
   font-style: italic;
   color: var(--muted);
 }

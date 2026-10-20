@@ -15,7 +15,6 @@ const SLOT_SECONDS = 60;
 const PAST_SECONDS = 2 * 3600;
 const FUTURE_SECONDS = 2 * 3600;
 const REFRESH_MS = 5 * 60 * 1000;
-const STALE_SECONDS = 40 * 60;
 const MIN_SPIN_MS = 700; // keep the refresh button spinning long enough to register
 
 export interface Timeline {
@@ -27,6 +26,8 @@ export interface Timeline {
   forecastFrom: number | null;
   /** Fractional slot index of the current wall-clock time. */
   now: number;
+  /** Time of the newest observed radar frame, or null. */
+  latest: number | null;
 }
 
 export class App {
@@ -38,7 +39,7 @@ export class App {
   private readonly fields = new Map<string, MotionField>();
   private hasForecast = false;
   private refs: FrameRef[] = [];
-  private timeline: Timeline = { times: [], available: null, forecastFrom: null, now: 0 };
+  private timeline: Timeline = { times: [], available: null, forecastFrom: null, now: 0, latest: null };
   private selected: number | null = null; // selected time, on a slot
   /** Keep the selection on "now" as the clock moves (until the user picks another time). */
   private followNow = true;
@@ -166,6 +167,7 @@ export class App {
       available: inWindow.length ? [slot(inWindow[0]), this.hasForecast ? count - 1 : lastObserved!] : null,
       forecastFrom: this.hasForecast ? lastObserved : null,
       now: (now - start) / SLOT_SECONDS,
+      latest: this.observed[this.observed.length - 1] ?? null,
     };
 
     const nowSlot = Math.floor(now / SLOT_SECONDS) * SLOT_SECONDS;
@@ -207,11 +209,10 @@ export class App {
   private updateStatus(): void {
     this.checkRefreshDone();
     const newest = this.observed[this.observed.length - 1];
-    const age = newest === undefined ? Infinity : Date.now() / 1000 - newest;
 
+    // Radar age is always shown in the status box (orange when stale); banners are for connection trouble.
     if (this.offline && newest === undefined) this.controls.setBanner("Can't reach the Met Office radar feed");
     else if (this.offline) this.controls.setBanner(`Offline — showing radar from ${formatClock(newest)}`);
-    else if (age > STALE_SECONDS) this.controls.setBanner(`Latest radar is ${Math.round(age / 60)} min old`);
     else this.controls.setBanner(null);
 
     // Only say something while loading; the slider already shows the latest time.

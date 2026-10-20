@@ -1,5 +1,8 @@
 import type { Timeline } from '../app';
-import { formatClock, formatOffset } from './time';
+import { formatAge, formatClock, formatOffset } from './time';
+
+/** The latest radar counts as out of date (shown orange) beyond this; normally it's 5–20 min old. */
+const STALE_SECONDS = 30 * 60;
 
 export interface ControlsCallbacks {
   onSeek(index: number): void;
@@ -7,7 +10,8 @@ export interface ControlsCallbacks {
 
 /**
  * A slim translucent strip at the bottom: the selected moment's clock time above a time slider,
- * plus a pill near the top showing the offset from now (visible while a thumb covers the strip).
+ * plus a one-line status box near the top (visible while a thumb covers the strip): latest radar
+ * age (orange when stale) │ offset of the selected moment from now │ "forecast" when extrapolated.
  * The track spans the whole timeline (now ± 2 h): observed frames are highlighted, forecast more
  * faintly, and a tick marks the current time. Forecast moments get a quiet
  * "forecast" tag in the top pill.
@@ -16,9 +20,11 @@ export class Controls {
   private readonly track: HTMLElement;
   private readonly slider: HTMLInputElement;
   private readonly clock: HTMLElement;
-  private readonly offset: HTMLElement;
-  private readonly offsetMins: HTMLElement;
-  private readonly offsetKind: HTMLElement;
+  private readonly statusBox: HTMLElement;
+  private readonly boxAge: HTMLElement;
+  private readonly boxOffset: HTMLElement;
+  private readonly boxKind: HTMLElement;
+  private latest: number | null = null;
   private readonly status: HTMLElement;
   private readonly banner: HTMLElement;
   private times: number[] = [];
@@ -37,18 +43,18 @@ export class Controls {
       </div>`;
     parent.appendChild(root);
 
-    this.offset = document.createElement('div');
-    this.offset.className = 'offset';
-    this.offset.setAttribute('aria-hidden', 'true'); // the slider row already announces the time
-    this.offset.innerHTML = '<span class="mins"></span><span class="kind" hidden>forecast</span>';
-    this.offset.hidden = true;
-    parent.appendChild(this.offset);
+    this.statusBox = document.createElement('div');
+    this.statusBox.className = 'status-box';
+    this.statusBox.innerHTML = '<span class="age"></span><span class="mins"></span><span class="kind">forecast</span>';
+    this.statusBox.hidden = true;
+    parent.appendChild(this.statusBox);
 
     this.track = root.querySelector('.track')!;
     this.slider = root.querySelector('.slider')!;
     this.clock = root.querySelector('.clock')!;
-    this.offsetMins = this.offset.querySelector('.mins')!;
-    this.offsetKind = this.offset.querySelector('.kind')!;
+    this.boxAge = this.statusBox.querySelector('.age')!;
+    this.boxOffset = this.statusBox.querySelector('.mins')!;
+    this.boxKind = this.statusBox.querySelector('.kind')!;
     this.status = root.querySelector('.status')!;
     this.banner = root.querySelector('.banner')!;
 
@@ -57,6 +63,7 @@ export class Controls {
 
   setTimeline(t: Timeline, index: number): void {
     this.times = t.times;
+    this.latest = t.latest;
     const last = Math.max(1, t.times.length - 1);
     this.slider.max = String(last);
     this.slider.disabled = !t.available || t.available[0] === t.available[1];
@@ -73,10 +80,15 @@ export class Controls {
     this.slider.value = String(index);
     const t = this.times[index];
     this.clock.textContent = t === undefined ? '--:--' : formatClock(t);
-    this.offset.hidden = t === undefined;
-    this.offset.classList.toggle('forecast', forecast);
-    this.offsetMins.textContent = t === undefined ? '' : formatOffset(t, Date.now() / 1000);
-    this.offsetKind.hidden = !forecast;
+    const now = Date.now() / 1000;
+    this.statusBox.hidden = t === undefined;
+    this.boxOffset.textContent = t === undefined ? '' : formatOffset(t, now);
+    this.boxKind.hidden = !forecast;
+    this.boxAge.hidden = this.latest === null;
+    if (this.latest !== null) {
+      this.boxAge.textContent = formatAge(this.latest, now);
+      this.boxAge.classList.toggle('stale', now - this.latest > STALE_SECONDS);
+    }
   }
 
   setStatus(text: string): void {

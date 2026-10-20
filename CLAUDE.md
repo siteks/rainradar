@@ -333,9 +333,13 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
 - **Refresh button** (`RefreshControl` in `map.ts`, under the locate button): runs the same refresh
   as the 5-min timer and keeps the selected time. It spins until the new frames are loaded and the
   newest frame's motion (and so the forecast) exists, with a minimum spin of 0.7 s.
-- **Offset pill** (top centre, below the credits): shows the selected moment relative to now
-  ("Now", "−25 min", "+1 h 05"), plus "forecast" when extrapolated. It stays readable while a thumb
-  covers the bottom strip. The bottom row keeps just the clock time and loading status. The listing fetches one extra frame before the
+- **Status box** (top centre, below the credits): one line with three fields:
+  - the latest radar's age ("radar 14 min old"), orange beyond 30 min (radar is normally 5–20 min old);
+  - the selected moment relative to now, larger ("Now", "−25 min", "+1 h 05");
+  - "forecast" when extrapolated.
+
+  It stays readable while a thumb covers the bottom strip. Banners are only for connection trouble.
+  The bottom row keeps just the clock time and loading status. The listing fetches one extra frame before the
   window, so the earliest minutes can be interpolated.
 - **Place labels** (`src/map/places.ts`): our own population-ranked labels replace the basemap's
   town/city labels over GB, Ireland and the Isle of Man below zoom 8.
