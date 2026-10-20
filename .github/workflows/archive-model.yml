@@ -41,7 +41,9 @@ jobs:
           gh release view model-archive --json assets -q '.assets[].name' > existing.txt
           node scripts/archive-model.mjs --out out --exclude-file existing.txt
 
+      # Runs even if some days failed, so the days that did build are kept.
       - name: Upload
+        if: always()
         run: |
           shopt -s nullglob
           files=(out/*.bin.gz)

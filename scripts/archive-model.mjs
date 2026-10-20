@@ -58,15 +58,31 @@ const ymd = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.ge
 const dayPath = (d) => `${d.getUTCFullYear()}/${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())}`;
 const isoHour = (d) => `${ymd(d)}T${pad(d.getUTCHours())}:00Z`;
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Retry transient failures (S3 occasionally drops long-lived connections) with backoff. */
+async function withRetry(label, fn, tries = 4) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (attempt >= tries) throw e;
+      const wait = 2000 * 2 ** (attempt - 1);
+      console.warn(`  ${label}: ${e.cause?.code ?? e.message}; retry ${attempt}/${tries - 1} in ${wait / 1000}s`);
+      await sleep(wait);
+    }
+  }
+}
+
 async function listPrefixes(prefix) {
-  const res = await fetch(LIST + encodeURIComponent(prefix));
+  const res = await withRetry(`list ${prefix}`, () => fetch(LIST + encodeURIComponent(prefix)));
   if (!res.ok) throw new Error(`S3 list ${prefix}: ${res.status}`);
   const xml = await res.text();
   return [...xml.matchAll(/<Prefix>([^<]+)<\/Prefix>/g)].map((m) => m[1]).filter((p) => p !== prefix);
 }
 
 async function listKeys(prefix) {
-  const res = await fetch(LIST.replace('&delimiter=/', '') + encodeURIComponent(prefix));
+  const res = await withRetry(`list ${prefix}`, () => fetch(LIST.replace('&delimiter=/', '') + encodeURIComponent(prefix)));
   if (!res.ok) throw new Error(`S3 list ${prefix}: ${res.status}`);
   return [...(await res.text()).matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
 }
@@ -163,7 +179,7 @@ async function archiveDay(day, runs) {
   for (const run of runs) {
     const fields = await mapLimit(run.keys, CONCURRENCY, async (key) => {
       const m = /(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})\.om$/.exec(key);
-      const data = await readValidTime(key);
+      const data = await withRetry(key.split('/').pop(), () => readValidTime(key));
       return { valid_time: `${m[1]}T${m[2]}:${m[3]}Z`, data };
     });
     const entry = { reference_time: isoHour(run.ref), fields: [] };
@@ -185,19 +201,31 @@ async function archiveDay(day, runs) {
 mkdirSync(outDir, { recursive: true });
 const today = new Date();
 today.setUTCHours(0, 0, 0, 0);
+// Days are independent: one failing doesn't stop the others (it's retried on the next scheduled run).
+let failures = 0;
 for (let back = days; back >= 1; back--) {
   const day = new Date(today.getTime() - back * 86400_000);
   const name = `ukv-${ymd(day)}.bin.gz`;
   if (exclude.has(name)) continue;
+  try {
+    await archiveOne(day, name, back);
+  } catch (e) {
+    failures++;
+    console.error(`${name}: FAILED (${e.cause?.code ?? e.message}); will retry next run`);
+  }
+}
+if (failures) process.exit(1);
+
+async function archiveOne(day, name, back) {
   const runs = await runsForDay(day);
   const complete = runs.length === RUN_HOURS.length && runs.every((r) => r.keys.length === LEADS);
   if (!complete && back < FINAL_AGE_DAYS) {
     console.log(`${name}: ${runs.length}/${RUN_HOURS.length} runs so far, waiting`);
-    continue;
+    return;
   }
   if (!runs.length) {
     console.log(`${name}: no runs available`);
-    continue;
+    return;
   }
   console.log(`${name}: archiving ${runs.length} runs${complete ? '' : ' (incomplete, expiring soon)'}`);
   const t = performance.now();
