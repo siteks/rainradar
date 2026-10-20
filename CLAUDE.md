@@ -53,6 +53,8 @@ The research notes below date from **2026-10-20**. Re-verify anything marked *(v
 - `npm run build` — typecheck + production build into `dist/`. `npm run preview` serves it, with the
   service worker.
 - `node scripts/make-icons.mjs` — regenerates `public/icons/` (drawn in code; there's no image tooling).
+- `node scripts/archive-model.mjs --out data/model-archive [--days 6]` — saves UKV model slices
+  locally; `node scripts/inspect-archive.mjs <file>` summarises one. See "Model archive".
 - `node scripts/fetch-places.mjs` — regenerates `src/map/places.json` (the place labels). It needs network
   access and `unzip`. Overpass is often busy; the script retries with backoff.
 - Deploy: push to `main`. `.github/workflows/deploy.yml` builds and publishes to GitHub Pages. In the
@@ -229,8 +231,8 @@ time and space.** It never switches to model imagery, so frame +0 is exactly the
   baseline), (c) observed flow held constant (frozen dense field, semi-Lagrangian), (d) the
   model-motion method above. (c) comes almost free once the forecast shader exists: trace each pixel
   back through the latest motion field. Ship it as the first forecast, before the model work.
-- Radar goes back 2 years, but Open-Meteo keeps model files for only **7 days**. Save a small archive
-  of model fields (precip + 700 hPa wind over the UK bounding box) while developing.
+- Radar goes back 2 years, but Open-Meteo keeps model files for only **7 days**. The model archive
+  (below) has been saving them since 2026-10-20.
 
 Engineering notes:
 - Read model fields as **raw numbers** with `@openmeteo/file-reader` in the worker. Only read the UK
@@ -242,6 +244,29 @@ Engineering notes:
   difference in units hardly matters.
 - `@openmeteo/weather-map-layer` is still useful as a debug overlay: show the model's own rain next to
   the warped radar.
+
+## Model archive
+
+`.github/workflows/archive-model.yml` runs daily (05:23 UTC, also runnable by hand). It runs
+`scripts/archive-model.mjs`, which builds every day not yet archived and uploads one asset per day,
+`ukv-YYYY-MM-DD.bin.gz`, to the `model-archive` pre-release.
+- **Catching up:** each run fills in any missing day within Open-Meteo's 7-day window, so late or
+  skipped schedules catch up. A day is written once all 8 runs exist, or at 5 days old with whatever
+  exists.
+- **Contents:** UKV runs at 00/03/…/21Z, each with valid times at leads 0–9 h. Per valid time:
+  - `precipitation`: uint16 tenths of mm over the preceding hour, lossless; 65535 = missing. Lead 0
+    has none.
+  - 700 hPa wind as u/v: int8, 0.5 m/s, every 4th grid point; −128 = missing.
+
+  About 10 MB per day.
+- **File format:** gzip of [uint32 LE header length | header JSON | payload]. The header holds the
+  grid definition and a byte offset for every array.
+- **Grid:** LAEA (lat_0 54.9, lon_0 −2.5, R 6371229), 1042×970 at 2 km, with the first point at
+  (−1158000, −1036000). Rows run **south to north** (checked: row 0 is warmest).
+- **Speed:** `OmHttpBackend` needs a block cache. Without one it makes one range request per 32×32
+  chunk (~30 s per file); with 1 MB `LruBlockCache` blocks it's ~3 s. A whole day takes ~1.5 min.
+- **Note:** GitHub disables scheduled workflows after 60 days without repo activity. Re-enable it on
+  the Actions tab if that happens.
 
 ## Recommended architecture (v1)
 

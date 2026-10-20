@@ -1,0 +1,48 @@
+name: Archive model data
+
+# Open-Meteo keeps model files for only 7 days, so a daily job saves a slice of the Met Office UKV
+# runs (see scripts/archive-model.mjs) as one asset per day on the "model-archive" release.
+# Each run fills in any day still missing, so late or skipped schedules catch up on their own.
+
+on:
+  schedule:
+    - cron: '23 5 * * *' # daily; the previous day's last run (21Z) is published by ~02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release and upload assets
+
+concurrency:
+  group: archive-model
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Ensure the release exists
+        run: |
+          gh release view model-archive >/dev/null 2>&1 || gh release create model-archive \
+            --prerelease --title "Model archive" \
+            --notes "Daily slices of the Met Office UKV model (via Open-Meteo) for forecast verification. Format: scripts/archive-model.mjs. Met Office data © Crown copyright, CC BY-SA 4.0; Open-Meteo CC BY 4.0."
+
+      - name: Build missing days
+        run: |
+          gh release view model-archive --json assets -q '.assets[].name' > existing.txt
+          node scripts/archive-model.mjs --out out --exclude-file existing.txt
+
+      - name: Upload
+        run: |
+          shopt -s nullglob
+          files=(out/*.bin.gz)
+          if [ ${#files[@]} -gt 0 ]; then gh release upload model-archive "${files[@]}"; else echo "Nothing new"; fi
