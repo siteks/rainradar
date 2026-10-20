@@ -3,6 +3,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { GRID, gridCorners } from '../radar/grid';
 import { PALETTE } from '../radar/palette';
+import { addPlaceLabels } from './places';
 
 // MapLibre locates its worker relative to its own module, which breaks once bundled.
 setWorkerUrl(maplibreWorkerUrl);
@@ -10,9 +11,10 @@ setWorkerUrl(maplibreWorkerUrl);
 const STYLE_LIGHT = 'https://tiles.openfreemap.org/styles/positron';
 const STYLE_DARK = 'https://tiles.openfreemap.org/styles/dark';
 const VIEW_KEY = 'rainradar.view';
-const RADAR_ATTRIBUTION =
+const ATTRIBUTION =
   'Radar <a href="https://www.metoffice.gov.uk/" target="_blank" rel="noopener">© Met Office</a> ' +
-  '<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA</a>';
+  '<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA</a> · ' +
+  'Places <a href="https://www.geonames.org/" target="_blank" rel="noopener">GeoNames</a>';
 
 interface SavedView {
   center: [number, number];
@@ -77,12 +79,13 @@ export class RadarMap {
     });
     this.map.addControl(geolocate, 'top-right');
     // Credits sit at the top, level with the locate button, always expanded but translucent.
-    this.map.addControl(new AttributionControl({ compact: false, customAttribution: RADAR_ATTRIBUTION }), 'top-left');
+    this.map.addControl(new AttributionControl({ compact: false, customAttribution: ATTRIBUTION }), 'top-left');
     this.map.on('moveend', () => saveView(this.map));
 
     this.ready = new Promise((resolve) => {
       this.map.on('load', () => {
         this.addRadarLayer();
+        addPlaceLabels(this.map);
         if (!saved) geolocate.trigger();
         resolve();
       });

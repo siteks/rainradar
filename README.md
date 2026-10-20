@@ -15,3 +15,4 @@ npm run build && npm run preview
 
 Radar data: © Crown copyright Met Office, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 Basemap: [OpenFreeMap](https://openfreemap.org/) © OpenMapTiles, data © OpenStreetMap contributors.
+Place labels: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), populations partly from [GeoNames](https://www.geonames.org/) (CC BY 4.0).

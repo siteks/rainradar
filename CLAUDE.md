@@ -43,6 +43,8 @@ The research notes below date from **2026-10-20**. Re-verify anything marked *(v
 - `npm run build` — typecheck + production build into `dist/`. `npm run preview` serves it, with the
   service worker.
 - `node scripts/make-icons.mjs` — regenerates `public/icons/` (drawn in code; there's no image tooling).
+- `node scripts/fetch-places.mjs` — regenerates `src/map/places.json` (the place labels). It needs network
+  access and `unzip`. Overpass is often busy; the script retries with backoff.
 - Deploy: push to `main`. `.github/workflows/deploy.yml` builds and publishes to GitHub Pages. In the
   repo, set Settings → Pages → Source to "GitHub Actions". `base: './'` means any repo name works.
 
@@ -250,6 +252,22 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
   6. That canvas is a MapLibre `canvas` source with `animate: false`. A paused canvas source only
      re-uploads while "playing", so `show()` plays it for one render. The radar layer sits under the
      basemap's first symbol layer, so labels stay on top.
+- **Place labels** (`src/map/places.ts`): our own population-ranked labels replace the basemap's
+  town/city labels over GB, Ireland and the Isle of Man below zoom 8.
+  - Why: the basemap ranks places by Natural Earth `scalerank`, a hand-tuned atlas ranking. It puts
+    Bath (7) above Bristol and Sheffield (8), and Wick/Lerwick (6) above both. Bristol isn't even in
+    the zoom-6 tiles.
+  - Data: `src/map/places.json`, about 680 rows of `[name, lon, lat, pop]`. Places and positions come
+    from OSM `place=city|town`. Population is the OSM tag, falling back to GeoNames by name within
+    5 km. GeoNames alone had misplaced towns (Loughton, Neston) and district totals.
+  - Rendering: 4 symbol layers by population tier (zoom 0/5.8/6.6/7.2), stacked so larger places win
+    collisions, plus `symbol-sort-key` = −pop within a tier. Text size scales with log(pop), and tier 1
+    is bold. The dot is drawn on a canvas, so it works with either basemap sprite.
+  - Basemap place layers are found by `source-layer: place`; the light and dark styles use different
+    layer ids. Each is split into a copy below zoom 8 with a `!within(UK_IE polygon)` filter, so
+    labels elsewhere (France, Norway…) still show. The Channel Islands are left to the basemap.
+  - Known data quirks: some OSM figures are council-district totals (Leeds 766k, Wakefield 322k), and
+    Birkenhead takes GeoNames' 325k (probably the Wirral's total). That's acceptable for ranking.
 - `GRID` (`src/radar/grid.ts`) is EPSG:3857 at 1500 m per pixel, covering lon −11…4.5 and lat 46.5…61
   (1151×1844 px). Bump `GRID_VERSION` if it or the quantisation changes.
 - **Forecast:** the same worker builds the forecast as described in "Forecast strategy":
@@ -294,6 +312,14 @@ fetches data directly from the AWS buckets. Changing the hosting URL later means
 - MapLibre v6 finds its own worker relative to its module URL, which breaks once bundled. Keep the
   `setWorkerUrl(… maplibre-gl-worker.mjs?url)` call in `src/map/map.ts`. Keep `mjs` in the workbox
   `globPatterns` so the worker is precached.
+- **The radar picture contains fixed artifacts.** Around Cobbacombe Cross radar (near Bampton, Devon),
+  on 2026-10-20 there were narrow radial streaks that stayed in place while the rain moved:
+  - weaker bands at bearings ~22–24° and ~102–104° (×0.6–0.75);
+  - a stronger band at ~167–168° (×1.3).
+
+  These are probably partial beam blockage or interference. Every radar site may have them. Motion
+  estimation (M2/M3) must not lock onto these zero-motion features: estimate on a smoothed/downsampled
+  field, use a robust estimator, and ignore near-zero vectors that coincide with known radar sites.
 - HDF5 string attributes from `jsfive` are NUL-padded. Strip them (`str()` in `decode.ts`).
 - The grey "no data" tint fills the whole `GRID` rectangle outside radar range, so the rectangle's edge
   is visible at low zoom. It also shows clearly that most of the Republic of Ireland has no radar coverage.
